@@ -8,6 +8,21 @@ SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 RUN_USER="s3-upload"
 
 # -----------------------------------------------
+# 引数チェック (--update でバイナリのみ更新)
+# -----------------------------------------------
+UPDATE_ONLY=false
+for arg in "$@"; do
+  case "${arg}" in
+    --update|-u) UPDATE_ONLY=true ;;
+    *)
+      echo "不明なオプション: ${arg}" >&2
+      echo "使い方: $0 [--update]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# -----------------------------------------------
 # 権限チェック
 # -----------------------------------------------
 if [ "$(id -u)" -ne 0 ]; then
@@ -27,6 +42,80 @@ if [ -z "${VERSION}" ]; then
   exit 1
 fi
 echo "      最新バージョン: ${VERSION}"
+
+# --update モード: バイナリ差し替えと .env 補完のみ実行して終了
+if "${UPDATE_ONLY}"; then
+  # OS / アーキテクチャ検出
+  OS=$(uname -s)
+  if [ "${OS}" != "Linux" ]; then
+    echo "このセットアップスクリプトは Linux 専用です: ${OS}" >&2
+    exit 1
+  fi
+  GOOS="linux"
+  ARCH=$(uname -m)
+  case "${ARCH}" in
+    x86_64)          GOARCH="amd64" ;;
+    aarch64|arm64)   GOARCH="arm64" ;;
+    armv7l|armv6l)   GOARCH="arm" ;;
+    i386|i686)       GOARCH="386" ;;
+    riscv64)         GOARCH="riscv64" ;;
+    ppc64le)         GOARCH="ppc64le" ;;
+    s390x)           GOARCH="s390x" ;;
+    *)
+      echo "サポートされていないアーキテクチャです: ${ARCH}" >&2
+      exit 1
+      ;;
+  esac
+
+  # バイナリダウンロード
+  DOWNLOAD_URL="https://github.com/KuronekoServer/s3-upload/releases/download/${VERSION}/s3-upload-${GOOS}-${GOARCH}.tar.gz"
+  echo "[1/3] バイナリをダウンロードしています (${VERSION}, ${GOOS}/${GOARCH})..."
+  TMP_DIR=$(mktemp -d)
+  trap 'rm -rf "${TMP_DIR}"' EXIT
+  curl -fsSL "${DOWNLOAD_URL}" -o "${TMP_DIR}/s3-upload.tar.gz"
+  tar -xzf "${TMP_DIR}/s3-upload.tar.gz" -C "${TMP_DIR}"
+  BINARY=$(find "${TMP_DIR}" -maxdepth 2 -type f -name "${SERVICE_NAME}" | head -1)
+  if [ -z "${BINARY}" ]; then
+    echo "アーカイブ内に実行バイナリ '${SERVICE_NAME}' が見つかりませんでした。" >&2
+    exit 1
+  fi
+  chmod +x "${BINARY}"
+
+  # サービス停止
+  echo "[2/3] サービスを停止してバイナリを差し替えています..."
+  systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
+  install -o root -g "${RUN_USER}" -m 750 "${BINARY}" "${INSTALL_DIR}/${SERVICE_NAME}"
+  echo "      差し替え完了: ${INSTALL_DIR}/${SERVICE_NAME}"
+
+  # .env に不足しているキーを追記
+  echo "[3/3] 設定ファイルの不足キーを確認しています..."
+  _env_add_if_missing() {
+    local key="$1"
+    local line="$2"
+    if ! grep -qE "^#?[[:space:]]*${key}[[:space:]]*=" "${CONFIG_DIR}/.env" 2>/dev/null; then
+      echo "${line}" >> "${CONFIG_DIR}/.env"
+      echo "      追加: ${line}"
+      return 0
+    fi
+    return 1
+  }
+  ADDED=0
+  _env_add_if_missing "DOCS_DISABLED"    "# DOCS_DISABLED=false"    && ADDED=$((ADDED+1))
+  _env_add_if_missing "MAX_FILE_SIZE_MB" "# MAX_FILE_SIZE_MB=100"   && ADDED=$((ADDED+1))
+  if [ "${ADDED}" -gt 0 ]; then
+    echo "      ${ADDED} 件のキーを追加しました。"
+  else
+    echo "      設定ファイルは最新です。"
+  fi
+
+  # サービス再起動
+  systemctl daemon-reload
+  systemctl start "${SERVICE_NAME}"
+  echo ""
+  echo "アップデートが完了しました (${VERSION})。"
+  echo "状態確認: sudo systemctl status ${SERVICE_NAME}"
+  exit 0
+fi
 
 # -----------------------------------------------
 # OS / アーキテクチャ検出
@@ -138,6 +227,12 @@ PORT=8080
 # ヘッダー認証 (true にすると X-Auth-Key ヘッダーが必須になります)
 AUTH_ENABLED=true
 AUTH_KEY=${AUTH_KEY}
+
+# ドキュメントエンドポイント無効化 (true にすると /docs・/openapi.json が 404 になります)
+# DOCS_DISABLED=false
+
+# 1ファイルあたりの最大サイズ MB (省略時: 無制限)
+# MAX_FILE_SIZE_MB=100
 EOF
   chown root:"${RUN_USER}" "${CONFIG_DIR}/.env"
   chmod 640 "${CONFIG_DIR}/.env"
@@ -160,6 +255,8 @@ else
   _env_add_if_missing "UPLOAD_PART_SIZE_MB"    "# UPLOAD_PART_SIZE_MB=32"             && ADDED=$((ADDED+1))
   _env_add_if_missing "UPLOAD_CONCURRENCY"     "# UPLOAD_CONCURRENCY=8"               && ADDED=$((ADDED+1))
   _env_add_if_missing "AUTH_ENABLED"           "AUTH_ENABLED=true"                    && ADDED=$((ADDED+1))
+  _env_add_if_missing "DOCS_DISABLED"          "# DOCS_DISABLED=false"                && ADDED=$((ADDED+1))
+  _env_add_if_missing "MAX_FILE_SIZE_MB"       "# MAX_FILE_SIZE_MB=100"               && ADDED=$((ADDED+1))
   if ! grep -qE "^#?[[:space:]]*AUTH_KEY[[:space:]]*=" "${CONFIG_DIR}/.env" 2>/dev/null; then
     NEW_AUTH_KEY=$(openssl rand -hex 32 2>/dev/null \
       || head -c 32 /dev/urandom | od -A n -t x1 | tr -d ' \n')

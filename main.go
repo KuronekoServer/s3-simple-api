@@ -12,6 +12,9 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// version はビルド時に -ldflags "-X main.version=vX.Y.Z" で注入されます。
+var version = "dev"
+
 func main() {
 	// バイナリと同じディレクトリの .env を読み込む（存在しない場合は無視）
 	exe, err := os.Executable()
@@ -45,7 +48,7 @@ func main() {
 		ReadHeaderTimeout: 30 * time.Second,
 	}
 
-	log.Printf("サーバーを起動しています: :%s (最大同時アップロード数: %d)", port, srv.MaxConcurrentUploads())
+	log.Printf("s3-upload %s を起動しています: :%s (最大同時アップロード数: %d)", version, port, srv.MaxConcurrentUploads())
 	if err := httpSrv.ListenAndServe(); err != nil {
 		log.Fatalf("サーバーエラー: %v", err)
 	}
