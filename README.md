@@ -55,6 +55,8 @@ go build -o s3-upload.exe
 - UPLOAD_CONCURRENCY: 1 ファイル内の並列数。未指定なら 8
 - AUTH_ENABLED: true にすると X-Auth-Key 必須
 - AUTH_KEY: AUTH_ENABLED=true の時に必要
+- DOCS_DISABLED: true にすると /docs と /openapi.json が 404 になる
+- MAX_FILE_SIZE_MB: 1 ファイルあたりの上限 MB。未指定なら無制限
 
 ## API の使い方
 
@@ -128,6 +130,8 @@ PUBLIC_BASE_URL を設定すると、返却される url は S3_ENDPOINT では�
 - 仕様をそのまま取る: /openapi.json
 
 Try it out を使ってそのままアップロード確認もできます。
+
+DOCS_DISABLED=true を設定すると両エンドポイントを無効にできます。
 
 Bunny Shield API Guardianにopenapi.jsonぶん投げると使えるらしいのでやってみようかなと
 

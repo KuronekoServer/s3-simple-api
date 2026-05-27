@@ -16,14 +16,15 @@ import (
 
 // Server はS3クライアントとアップロード設定を保持します。
 type Server struct {
-	s3Client      *s3.Client
-	uploader      *manager.Uploader
-	bucket        string
-	endpoint      string
-	publicBaseURL string
-	semaphore     chan struct{}
-	authEnabled   bool
-	authKey       string
+	s3Client         *s3.Client
+	uploader         *manager.Uploader
+	bucket           string
+	endpoint         string
+	publicBaseURL    string
+	semaphore        chan struct{}
+	authEnabled      bool
+	authKey          string
+	maxFileSizeBytes int64
 }
 
 // New は環境変数からS3接続設定を読み込み Server を初期化します。
@@ -102,15 +103,23 @@ func New() (*Server, error) {
 
 	publicBaseURL := os.Getenv("PUBLIC_BASE_URL")
 
+	var maxFileSizeBytes int64
+	if value := os.Getenv("MAX_FILE_SIZE_MB"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+			maxFileSizeBytes = int64(parsed) * 1024 * 1024
+		}
+	}
+
 	return &Server{
-		s3Client:      client,
-		uploader:      uploader,
-		bucket:        bucket,
-		endpoint:      endpoint,
-		publicBaseURL: publicBaseURL,
-		semaphore:     make(chan struct{}, maxConcurrent),
-		authEnabled:   authEnabled,
-		authKey:       authKey,
+		s3Client:         client,
+		uploader:         uploader,
+		bucket:           bucket,
+		endpoint:         endpoint,
+		publicBaseURL:    publicBaseURL,
+		semaphore:        make(chan struct{}, maxConcurrent),
+		authEnabled:      authEnabled,
+		authKey:          authKey,
+		maxFileSizeBytes: maxFileSizeBytes,
 	}, nil
 }
 

@@ -32,8 +32,10 @@ func main() {
 
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux)
-	mux.HandleFunc("/docs", docsHandler)
-	mux.HandleFunc("/openapi.json", openAPIHandler)
+	if os.Getenv("DOCS_DISABLED") != "true" {
+		mux.HandleFunc("/docs", docsHandler)
+		mux.HandleFunc("/openapi.json", openAPIHandler)
+	}
 
 	// 大容量ファイルのアップロードに対応するため Read/Write タイムアウトは設定しない
 	// ReadHeaderTimeout のみ設定してスローロリス攻撃を防ぐ

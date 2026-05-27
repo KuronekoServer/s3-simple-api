@@ -15,6 +15,26 @@ import (
 )
 
 var errInvalidUploadFilename = errors.New("有効なファイル名が必要です")
+var errFileTooLarge = errors.New("ファイルサイズが制限を超えています")
+
+// limitedReader は計上されたバイト数が上限を超えた際に errFileTooLarge を返します。
+type limitedReader struct {
+	r     io.Reader
+	limit int64
+	read  int64
+}
+
+func (l *limitedReader) Read(p []byte) (int, error) {
+	if l.read >= l.limit {
+		return 0, errFileTooLarge
+	}
+	n, err := l.r.Read(p)
+	l.read += int64(n)
+	if l.read > l.limit {
+		return 0, errFileTooLarge
+	}
+	return n, err
+}
 
 // uploadHandler は単一または複数のファイルをストリーミングアップロードします。
 func (s *Server) uploadHandler(w http.ResponseWriter, r *http.Request) {
@@ -65,6 +85,10 @@ func (s *Server) uploadHandler(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 				return
 			}
+			if errors.Is(err, errFileTooLarge) {
+				writeJSON(w, http.StatusRequestEntityTooLarge, APIResponse{Success: false, Message: err.Error()})
+				return
+			}
 
 			log.Printf("アップロードエラー [%s]: %v", part.FileName(), err)
 			writeJSON(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "アップロードに失敗しました"})
@@ -104,13 +128,18 @@ func (s *Server) uploadMultipartFile(ctx context.Context, part *multipart.Part, 
 		contentType = "application/octet-stream"
 	}
 
+	var body io.Reader = part
+	if s.maxFileSizeBytes > 0 {
+		body = &limitedReader{r: part, limit: s.maxFileSizeBytes}
+	}
+
 	s.semaphore <- struct{}{}
 	defer func() { <-s.semaphore }()
 
 	_, err := s.uploader.Upload(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
 		Key:         aws.String(key),
-		Body:        part,
+		Body:        body,
 		ContentType: aws.String(contentType),
 	})
 	if err != nil {
